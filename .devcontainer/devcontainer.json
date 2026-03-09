@@ -1,0 +1,32 @@
+{
+    "name": "msda",
+    "build": {
+        "dockerfile": "Dockerfile",
+        "args": {
+            "CONTAINER_WORKSPACE_FOLDER": "${containerWorkspaceFolder}"
+        }
+    },
+    "runArgs": [
+        "--name",
+        "msda"
+    ],
+    "remoteUser": "ubuntu",
+    "postCreateCommand": "uv sync",
+    "customizations": {
+        "vscode": {
+            "extensions": [
+                "astral-sh.ty",
+                "ms-toolsai.jupyter",
+                "charliermarsh.ruff",
+                "ms-vscode.makefile-tools",
+                "anthropic.claude-code"
+            ],
+            "settings": {
+                "python.defaultInterpreterPath": "${workspaceFolder}/.venv/bin/python"
+            }
+        }
+    },
+    "mounts": [
+        "source=msda,target=/home/ubuntu,type=volume"
+    ]
+}
