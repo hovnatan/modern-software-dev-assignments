@@ -1,7 +1,7 @@
 import ast
 import json
 import os
-from typing import Any, Dict, List, Optional, Tuple, Callable
+from collections.abc import Callable
 
 from dotenv import load_dotenv
 from ollama import chat
@@ -14,7 +14,7 @@ NUM_RUNS_TIMES = 3
 # ==========================
 # Tool implementation (the "executor")
 # ==========================
-def _annotation_to_str(annotation: Optional[ast.AST]) -> str:
+def _annotation_to_str(annotation: ast.AST | None) -> str:
     if annotation is None:
         return "None"
     try:
@@ -26,11 +26,11 @@ def _annotation_to_str(annotation: Optional[ast.AST]) -> str:
         return type(annotation).__name__
 
 
-def _list_function_return_types(file_path: str) -> List[Tuple[str, str]]:
-    with open(file_path, "r", encoding="utf-8") as f:
+def _list_function_return_types(file_path: str) -> list[tuple[str, str]]:
+    with open(file_path, encoding="utf-8") as f:
         source = f.read()
     tree = ast.parse(source)
-    results: List[Tuple[str, str]] = []
+    results: list[tuple[str, str]] = []
     for node in tree.body:
         if isinstance(node, ast.FunctionDef):
             return_str = _annotation_to_str(node.returns)
@@ -60,8 +60,9 @@ def add(a: int, b: int) -> int:
 def greet(name: str) -> str:
     return f"Hello, {name}!"
 
+
 # Tool registry for dynamic execution by name
-TOOL_REGISTRY: Dict[str, Callable[..., str]] = {
+TOOL_REGISTRY: dict[str, Callable[..., str]] = {
     "output_every_func_return_type": output_every_func_return_type,
 }
 
@@ -70,7 +71,7 @@ TOOL_REGISTRY: Dict[str, Callable[..., str]] = {
 # ==========================
 
 # TODO: Fill this in!
-YOUR_SYSTEM_PROMPT = ""
+YOUR_SYSTEM_PROMPT = f"""You are a helpful assistant that can call tools to help you solve problems. You will be given a problem and you will need to call the appropriate tool to solve it. You will then return the result of the tool call. Available tools: {TOOL_REGISTRY.keys()}. If you need to call a tool return the tool call in JSON format: {{"tool": <tool_name>, "args": {{<tool_args>}}}}. You will only return the JSON object, no other text or explanation."""
 
 
 def resolve_path(p: str) -> str:
@@ -84,8 +85,9 @@ def resolve_path(p: str) -> str:
     return p
 
 
-def extract_tool_call(text: str) -> Dict[str, Any]:
+def extract_tool_call(text: str) -> dict[str, object]:
     """Parse a single JSON object from the model output."""
+    print("DEBUG: extract_tool_call", text)
     text = text.strip()
     # Some models wrap JSON in code fences; attempt to strip
     if text.startswith("```") and text.endswith("```"):
@@ -99,7 +101,7 @@ def extract_tool_call(text: str) -> Dict[str, Any]:
         raise ValueError("Model did not return valid JSON for the tool call")
 
 
-def run_model_for_tool_call(system_prompt: str) -> Dict[str, Any]:
+def run_model_for_tool_call(system_prompt: str) -> dict[str, object]:
     response = chat(
         model="llama3.1:8b",
         messages=[
@@ -112,7 +114,7 @@ def run_model_for_tool_call(system_prompt: str) -> Dict[str, Any]:
     return extract_tool_call(content)
 
 
-def execute_tool_call(call: Dict[str, Any]) -> str:
+def execute_tool_call(call: dict[str, object]) -> str:
     name = call.get("tool")
     if not isinstance(name, str):
         raise ValueError("Tool call JSON missing 'tool' string")
@@ -125,7 +127,9 @@ def execute_tool_call(call: Dict[str, Any]) -> str:
 
     # Best-effort path resolution if a file_path arg is present
     if "file_path" in args and isinstance(args["file_path"], str):
-        args["file_path"] = resolve_path(args["file_path"]) if str(args["file_path"]) != "" else __file__
+        args["file_path"] = (
+            resolve_path(args["file_path"]) if str(args["file_path"]) != "" else __file__
+        )
     elif "file_path" not in args:
         # Provide default for tools expecting file_path
         args["file_path"] = __file__
@@ -141,13 +145,14 @@ def compute_expected_output() -> str:
 def test_your_prompt(system_prompt: str) -> bool:
     """Run once: require the model to produce a valid tool call; compare tool output to expected."""
     expected = compute_expected_output()
+    print("DEBUG: expected", expected)
     for _ in range(NUM_RUNS_TIMES):
         try:
             call = run_model_for_tool_call(system_prompt)
         except Exception as exc:
             print(f"Failed to parse tool call: {exc}")
             continue
-        print(call)
+        print("DEBUG: call", call)
         try:
             actual = execute_tool_call(call)
         except Exception as exc:
