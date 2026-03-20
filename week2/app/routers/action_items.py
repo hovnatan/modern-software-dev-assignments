@@ -1,47 +1,70 @@
 from __future__ import annotations
 
-from typing import Any
-
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, status
 
 from .. import db
-from ..services.extract import extract_action_items_llm
+from ..schemas import (
+    ActionItemRead,
+    ExtractedItem,
+    ExtractRequest,
+    ExtractResponse,
+    MarkDoneRequest,
+    MarkDoneResponse,
+)
+from ..services.extract import extract_action_items, extract_action_items_llm
 
 router = APIRouter(prefix="/action-items", tags=["action-items"])
 
 
-@router.post("/extract")
-def extract(payload: dict[str, Any]) -> dict[str, Any]:
-    text = str(payload.get("text", "")).strip()
-    if not text:
-        raise HTTPException(status_code=400, detail="text is required")
-
+@router.post("/extract", response_model=ExtractResponse)
+def extract(payload: ExtractRequest) -> ExtractResponse:
     note_id: int | None = None
-    if payload.get("save_note"):
-        note_id = db.insert_note(text)
+    if payload.save_note:
+        note_id = db.insert_note(payload.text)
 
-    items = extract_action_items_llm(text)
+    items = extract_action_items(payload.text)
     ids = db.insert_action_items(items, note_id=note_id)
-    return {"note_id": note_id, "items": [{"id": i, "text": t} for i, t in zip(ids, items)]}
+    return ExtractResponse(
+        note_id=note_id,
+        items=[ExtractedItem(id=i, text=t) for i, t in zip(ids, items, strict=True)],
+    )
 
 
-@router.get("")
-def list_all(note_id: int | None = None) -> list[dict[str, Any]]:
+@router.post("/extract-llm", response_model=ExtractResponse)
+def extract_llm(payload: ExtractRequest) -> ExtractResponse:
+    note_id: int | None = None
+    if payload.save_note:
+        note_id = db.insert_note(payload.text)
+
+    items = extract_action_items_llm(payload.text)
+    ids = db.insert_action_items(items, note_id=note_id)
+    return ExtractResponse(
+        note_id=note_id,
+        items=[ExtractedItem(id=i, text=t) for i, t in zip(ids, items, strict=True)],
+    )
+
+
+@router.get("", response_model=list[ActionItemRead])
+def list_all(note_id: int | None = None) -> list[ActionItemRead]:
     rows = db.list_action_items(note_id=note_id)
     return [
-        {
-            "id": r["id"],
-            "note_id": r["note_id"],
-            "text": r["text"],
-            "done": bool(r["done"]),
-            "created_at": r["created_at"],
-        }
+        ActionItemRead(
+            id=r.id,
+            note_id=r.note_id,
+            text=r.text,
+            done=r.done,
+            created_at=r.created_at,
+        )
         for r in rows
     ]
 
 
-@router.post("/{action_item_id}/done")
-def mark_done(action_item_id: int, payload: dict[str, Any]) -> dict[str, Any]:
-    done = bool(payload.get("done", True))
-    db.mark_action_item_done(action_item_id, done)
-    return {"id": action_item_id, "done": done}
+@router.post("/{action_item_id}/done", response_model=MarkDoneResponse)
+def mark_done(action_item_id: int, payload: MarkDoneRequest) -> MarkDoneResponse:
+    updated = db.mark_action_item_done(action_item_id, payload.done)
+    if not updated:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="action item not found",
+        )
+    return MarkDoneResponse(id=action_item_id, done=payload.done)

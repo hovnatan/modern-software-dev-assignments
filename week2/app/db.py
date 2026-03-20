@@ -1,22 +1,56 @@
 from __future__ import annotations
 
 import sqlite3
-from pathlib import Path
+from dataclasses import dataclass
 
-BASE_DIR = Path(__file__).resolve().parents[1]
-DATA_DIR = BASE_DIR / "data"
-DB_PATH = DATA_DIR / "app.db"
+from .config import get_settings
 
-print("DB_PATH:", DB_PATH)
+
+@dataclass(frozen=True, slots=True)
+class NoteRecord:
+    id: int
+    content: str
+    created_at: str
+
+    @classmethod
+    def from_row(cls, row: sqlite3.Row) -> NoteRecord:
+        return cls(
+            id=int(row["id"]),
+            content=str(row["content"]),
+            created_at=str(row["created_at"]),
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class ActionItemRecord:
+    id: int
+    note_id: int | None
+    text: str
+    done: bool
+    created_at: str
+
+    @classmethod
+    def from_row(cls, row: sqlite3.Row) -> ActionItemRecord:
+        return cls(
+            id=int(row["id"]),
+            note_id=int(row["note_id"]) if row["note_id"] is not None else None,
+            text=str(row["text"]),
+            done=bool(row["done"]),
+            created_at=str(row["created_at"]),
+        )
+
+
+def _db_path() -> str:
+    return str(get_settings().db_path)
 
 
 def ensure_data_directory_exists() -> None:
-    DATA_DIR.mkdir(parents=True, exist_ok=True)
+    get_settings().data_dir.mkdir(parents=True, exist_ok=True)
 
 
 def get_connection() -> sqlite3.Connection:
     ensure_data_directory_exists()
-    connection = sqlite3.connect(DB_PATH)
+    connection = sqlite3.connect(_db_path())
     connection.row_factory = sqlite3.Row
     return connection
 
@@ -57,14 +91,14 @@ def insert_note(content: str) -> int:
         return int(cursor.lastrowid)
 
 
-def list_notes() -> list[sqlite3.Row]:
+def list_notes() -> list[NoteRecord]:
     with get_connection() as connection:
         cursor = connection.cursor()
         cursor.execute("SELECT id, content, created_at FROM notes ORDER BY id DESC")
-        return list(cursor.fetchall())
+        return [NoteRecord.from_row(row) for row in cursor.fetchall()]
 
 
-def get_note(note_id: int) -> sqlite3.Row | None:
+def get_note(note_id: int) -> NoteRecord | None:
     with get_connection() as connection:
         cursor = connection.cursor()
         cursor.execute(
@@ -72,7 +106,7 @@ def get_note(note_id: int) -> sqlite3.Row | None:
             (note_id,),
         )
         row = cursor.fetchone()
-        return row
+        return NoteRecord.from_row(row) if row else None
 
 
 def insert_action_items(items: list[str], note_id: int | None = None) -> list[int]:
@@ -89,7 +123,7 @@ def insert_action_items(items: list[str], note_id: int | None = None) -> list[in
         return ids
 
 
-def list_action_items(note_id: int | None = None) -> list[sqlite3.Row]:
+def list_action_items(note_id: int | None = None) -> list[ActionItemRecord]:
     with get_connection() as connection:
         cursor = connection.cursor()
         if note_id is None:
@@ -98,13 +132,19 @@ def list_action_items(note_id: int | None = None) -> list[sqlite3.Row]:
             )
         else:
             cursor.execute(
-                "SELECT id, note_id, text, done, created_at FROM action_items WHERE note_id = ? ORDER BY id DESC",
+                """
+                SELECT id, note_id, text, done, created_at
+                FROM action_items
+                WHERE note_id = ?
+                ORDER BY id DESC
+                """,
                 (note_id,),
             )
-        return list(cursor.fetchall())
+        return [ActionItemRecord.from_row(row) for row in cursor.fetchall()]
 
 
-def mark_action_item_done(action_item_id: int, done: bool) -> None:
+def mark_action_item_done(action_item_id: int, done: bool) -> bool:
+    """Return True if a row was updated."""
     with get_connection() as connection:
         cursor = connection.cursor()
         cursor.execute(
@@ -112,3 +152,4 @@ def mark_action_item_done(action_item_id: int, done: bool) -> None:
             (1 if done else 0, action_item_id),
         )
         connection.commit()
+        return cursor.rowcount > 0

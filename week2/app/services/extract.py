@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+import json
 import os
 import re
 
 from dotenv import load_dotenv
-from ollama import chat
-from pydantic import BaseModel, Field
+from ollama import RequestError, ResponseError, chat
+from pydantic import BaseModel, Field, ValidationError
+
+from ..exceptions import LLMUnavailableError
 
 load_dotenv()
 
@@ -107,31 +110,45 @@ def extract_action_items_llm(text: str) -> list[str]:
         return []
 
     model = os.environ.get("OLLAMA_MODEL", _DEFAULT_OLLAMA_MODEL)
-    response = chat(
-        model=model,
-        messages=[
-            {
-                "role": "system",
-                "content": (
-                    "You extract actionable tasks from notes, emails, and meeting minutes. "
-                    "Each item must be a standalone task (no leading bullets, numbers, or checkboxes). "
-                    "Include follow-ups, deadlines, and assigned work; skip pure commentary. "
-                    "If there are no tasks, respond with an empty items array."
-                ),
-            },
-            {
-                "role": "user",
-                "content": f"Extract action items from this text:\n\n{stripped}",
-            },
-        ],
-        format=_ActionItemsLLMSchema.model_json_schema(),
-        options={"temperature": 0},
-    )
+    try:
+        response = chat(
+            model=model,
+            messages=[
+                {
+                    "role": "system",
+                    "content": (
+                        "You extract actionable tasks from notes, emails, and meeting minutes. "
+                        "Each item must be a standalone task (no leading bullets, numbers, or checkboxes). "
+                        "Include follow-ups, deadlines, and assigned work; skip pure commentary. "
+                        "If there are no tasks, respond with an empty items array."
+                    ),
+                },
+                {
+                    "role": "user",
+                    "content": f"Extract action items from this text:\n\n{stripped}",
+                },
+            ],
+            format=_ActionItemsLLMSchema.model_json_schema(),
+            options={"temperature": 0},
+        )
+    except (RequestError, ResponseError, ConnectionError, TimeoutError, OSError) as exc:
+        raise LLMUnavailableError(
+            "Action-item extraction failed: Ollama is unreachable or returned an error. "
+            "Ensure the server is running and the model is pulled "
+            f"(see OLLAMA_MODEL; attempted model {model!r}). "
+            f"({type(exc).__name__}: {exc})"
+        ) from exc
+
     content = response.message.content
     if not content:
         return []
 
-    parsed = _ActionItemsLLMSchema.model_validate_json(content)
+    try:
+        parsed = _ActionItemsLLMSchema.model_validate_json(content)
+    except (ValidationError, json.JSONDecodeError, TypeError) as exc:
+        raise LLMUnavailableError(
+            "Action-item extraction failed: could not parse structured output from the model."
+        ) from exc
     normalized = [item.strip() for item in parsed.items if item.strip()]
 
     seen: set[str] = set()

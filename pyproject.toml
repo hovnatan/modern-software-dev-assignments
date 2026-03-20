@@ -23,6 +23,11 @@ dev = [
     "pre-commit>=3.6.0",
 ]
 
+[tool.pytest.ini_options]
+markers = [
+    "ollama: integration tests that require a local Ollama server and pulled model",
+]
+
 [tool.uv]
 package = false
 

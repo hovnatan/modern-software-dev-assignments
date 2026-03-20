@@ -12,7 +12,11 @@
       .items { margin-top: 1rem; }
       .item { display: flex; align-items: center; gap: 0.5rem; padding: 0.25rem 0; }
       .muted { color: #6b7280; font-size: 0.875rem; }
-      .row { display: flex; gap: 0.5rem; align-items: center; }
+      .row { display: flex; gap: 0.5rem; align-items: center; flex-wrap: wrap; }
+      .notes-section { margin-top: 1.5rem; }
+      .note-card { border: 1px solid #e5e7eb; border-radius: 6px; padding: 0.75rem; margin-top: 0.5rem; background: #fafafa; }
+      .note-card header { font-size: 0.75rem; color: #6b7280; margin-bottom: 0.35rem; }
+      .note-card pre { margin: 0; white-space: pre-wrap; word-break: break-word; font-family: inherit; font-size: 0.9rem; }
     </style>
   </head>
   <body>
@@ -23,50 +27,100 @@
     <textarea id="text" placeholder="Paste notes here...&#10;e.g.&#10;- [ ] Set up database&#10;- Implement extract endpoint"></textarea>
     <div class="row">
       <label class="row"><input id="save_note" type="checkbox" checked /> Save as note</label>
-      <button id="extract">Extract</button>
+      <button id="extract" type="button">Extract</button>
+      <button id="extract_llm" type="button">Extract LLM</button>
+      <button id="list_notes" type="button">List Notes</button>
     </div>
 
     <div class="items" id="items"></div>
 
+    <section class="notes-section" id="notes_section" hidden>
+      <h2 class="muted" style="font-size: 1rem; margin-bottom: 0.5rem;">Saved notes</h2>
+      <div id="notes_list"></div>
+    </section>
+
     <script>
       const $ = (sel) => document.querySelector(sel);
       const itemsEl = $('#items');
-      const btn = $('#extract');
-      btn.addEventListener('click', async () => {
+      const notesSection = $('#notes_section');
+      const notesListEl = $('#notes_list');
+
+      function escapeHtml(s) {
+        return String(s)
+          .replace(/&/g, '&amp;')
+          .replace(/</g, '&lt;')
+          .replace(/>/g, '&gt;')
+          .replace(/"/g, '&quot;');
+      }
+
+      function renderActionItems(data) {
+        if (!data.items || data.items.length === 0) {
+          itemsEl.innerHTML = '<p class="muted">No action items found.</p>';
+          return;
+        }
+        itemsEl.innerHTML = data.items.map(it => (
+          `<div class="item"><input type="checkbox" data-id="${it.id}" /> <span>${escapeHtml(it.text)}</span></div>`
+        )).join('');
+        itemsEl.querySelectorAll('input[type="checkbox"]').forEach(cb => {
+          cb.addEventListener('change', async (e) => {
+            const id = e.target.getAttribute('data-id');
+            await fetch(`/action-items/${id}/done`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ done: e.target.checked }),
+            });
+          });
+        });
+      }
+
+      async function runExtract(url) {
         const text = $('#text').value;
         const save = $('#save_note').checked;
         itemsEl.textContent = 'Extracting...';
         try {
-          const res = await fetch('/action-items/extract', {
+          const res = await fetch(url, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ text, save_note: save }),
           });
-          if (!res.ok) throw new Error('Request failed');
-          const data = await res.json();
-          if (!data.items || data.items.length === 0) {
-            itemsEl.innerHTML = '<p class="muted">No action items found.</p>';
+          const data = await res.json().catch(() => ({}));
+          if (!res.ok) {
+            const detail = typeof data.detail === 'string' ? data.detail : 'Request failed';
+            itemsEl.innerHTML = `<p class="muted">${escapeHtml(detail)}</p>`;
             return;
           }
-          itemsEl.innerHTML = data.items.map(it => (
-            `<div class="item"><input type="checkbox" data-id="${it.id}" /> <span>${it.text}</span></div>`
-          )).join('');
-          itemsEl.querySelectorAll('input[type="checkbox"]').forEach(cb => {
-            cb.addEventListener('change', async (e) => {
-              const id = e.target.getAttribute('data-id');
-              await fetch(`/action-items/${id}/done`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ done: e.target.checked }),
-              });
-            });
-          });
+          renderActionItems(data);
         } catch (err) {
           console.error(err);
           itemsEl.textContent = 'Error extracting items';
         }
-      });
+      }
 
+      $('#extract').addEventListener('click', () => runExtract('/action-items/extract'));
+      $('#extract_llm').addEventListener('click', () => runExtract('/action-items/extract-llm'));
+
+      $('#list_notes').addEventListener('click', async () => {
+        notesSection.hidden = false;
+        notesListEl.textContent = 'Loading...';
+        try {
+          const res = await fetch('/notes');
+          const data = await res.json().catch(() => null);
+          if (!res.ok) {
+            notesListEl.innerHTML = '<p class="muted">Could not load notes.</p>';
+            return;
+          }
+          if (!Array.isArray(data) || data.length === 0) {
+            notesListEl.innerHTML = '<p class="muted">No notes yet.</p>';
+            return;
+          }
+          notesListEl.innerHTML = data.map((n) => (
+            `<article class="note-card"><header>Note #${n.id} · ${escapeHtml(n.created_at)}</header><pre>${escapeHtml(n.content)}</pre></article>`
+          )).join('');
+        } catch (err) {
+          console.error(err);
+          notesListEl.textContent = 'Error loading notes';
+        }
+      });
     </script>
   </body>
   </html>
