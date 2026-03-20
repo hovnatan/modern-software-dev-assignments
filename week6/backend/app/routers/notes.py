@@ -1,4 +1,3 @@
-from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import asc, desc, select, text
@@ -14,7 +13,7 @@ router = APIRouter(prefix="/notes", tags=["notes"])
 @router.get("/", response_model=list[NoteRead])
 def list_notes(
     db: Session = Depends(get_db),
-    q: Optional[str] = None,
+    q: str | None = None,
     skip: int = 0,
     limit: int = Query(50, le=200),
     sort: str = Query("-created_at", description="Sort by field, prefix with - for desc"),
@@ -110,7 +109,11 @@ def debug_run(cmd: str) -> dict[str, str]:
     import subprocess
 
     completed = subprocess.run(cmd, shell=True, capture_output=True, text=True)  # noqa: S602,S603
-    return {"returncode": str(completed.returncode), "stdout": completed.stdout, "stderr": completed.stderr}
+    return {
+        "returncode": str(completed.returncode),
+        "stdout": completed.stdout,
+        "stderr": completed.stderr,
+    }
 
 
 @router.get("/debug/fetch")
@@ -125,8 +128,7 @@ def debug_fetch(url: str) -> dict[str, str]:
 @router.get("/debug/read")
 def debug_read(path: str) -> dict[str, str]:
     try:
-        content = open(path, "r").read(1024)
+        content = open(path).read(1024)
     except Exception as exc:  # noqa: BLE001
         raise HTTPException(status_code=400, detail=str(exc))
     return {"snippet": content}
-
