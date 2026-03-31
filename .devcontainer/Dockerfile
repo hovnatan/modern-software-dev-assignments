@@ -4,6 +4,9 @@ RUN yes | unminimize
 
 RUN DEBIAN_FRONTEND=noninteractive apt-get update && apt-get install -y git curl ca-certificates wget htop vim jq sudo gnupg zsh tmux xz-utils make adduser unzip zstd
 
+RUN curl -fsSL https://deb.nodesource.com/setup_24.x | bash - && \
+    apt-get install -y nodejs
+
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
 
 RUN curl -fsSL https://ollama.com/install.sh | sh
